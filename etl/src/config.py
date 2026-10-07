@@ -21,9 +21,10 @@ def dw_cfg() -> dict:
     return _db("DW")
 
 
-CONTROL_PATH = os.environ.get("CONTROL_PATH", "/var/lib/etl/control.db")
-LOG_DIR = os.environ.get("LOG_DIR", "/var/log/etl")
-LOCK_PATH = os.environ.get("LOCK_PATH", "/tmp/etl.lock")
+def stg_cfg() -> dict:
+    """staging-db. Default schema = STG_DB_NAME (etl_control); staging tables are schema-qualified."""
+    return _db("STG")
+
 
 # Max NEW rows read per transactional table per run (a backlog is drained over several runs).
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "5000"))

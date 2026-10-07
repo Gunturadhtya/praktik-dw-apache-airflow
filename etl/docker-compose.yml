@@ -1,5 +1,35 @@
 name: bi-etl
 
+x-airflow: &airflow
+  image: bi-etl-airflow:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file: .env
+  environment:
+    TZ: Asia/Makassar
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"   
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Makassar
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-postgres/airflow
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/etl_src
+    - airflow_logs:/opt/airflow/logs
+  depends_on: &airflow-deps
+    airflow-postgres:
+      condition: service_healthy
+    staging-db:
+      condition: service_healthy
+
 services:
   staging-db:
     image: mysql:8.0
@@ -7,7 +37,7 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${STG_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${STG_DB_NAME}
+      MYSQL_DATABASE: ${STG_DB_NAME}         
       MYSQL_USER: ${STG_USER}
       MYSQL_PASSWORD: ${STG_PASSWORD}
       TZ: Asia/Makassar
@@ -23,21 +53,65 @@ services:
       timeout: 5s
       retries: 10
 
-  etl-service:
-    build: .
-    container_name: etl-service
+  airflow-postgres:
+    image: postgres:16
+    container_name: airflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 10
+
+  airflow-init:
+    <<: *airflow
+    container_name: airflow-init
+    command: db migrate
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow
+    container_name: airflow-apiserver
+    command: api-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      <<: *airflow-deps
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v2/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  airflow-scheduler:
+    <<: *airflow
+    container_name: airflow-scheduler
+    command: scheduler
     restart: unless-stopped
     depends_on:
-      staging-db:
-        condition: service_healthy
-    env_file: .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - etl_logs:/var/log/etl
-      - etl_control:/var/lib/etl      # NEW: SQLite control.db (watermarks) must survive restarts
+      <<: *airflow-deps
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow
+    container_name: airflow-dag-processor
+    command: dag-processor
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-deps
+      airflow-init:
+        condition: service_completed_successfully
 
 volumes:
   stg_data:
-  etl_logs:
-  etl_control:
+  airflow_pg:
+  airflow_logs:

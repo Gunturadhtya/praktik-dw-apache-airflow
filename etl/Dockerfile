@@ -1,17 +1,7 @@
-FROM python:3.11-slim
+ARG AIRFLOW_VERSION=3.0.6
+FROM apache/airflow:${AIRFLOW_VERSION}
 
-ENV TZ=Asia/Makassar PYTHONUNBUFFERED=1
-RUN apt-get update \
- && apt-get install -y --no-install-recommends cron tzdata \
- && rm -rf /var/lib/apt/lists/*
+COPY src/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-WORKDIR /app
-COPY src/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY src/ /app/src/
-COPY entrypoint.sh /entrypoint.sh
-# strip Windows CRLF line endings, otherwise the script fails with "not found"
-RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
+ENV PYTHONPATH=/opt/airflow/etl_src

@@ -1,8 +1,8 @@
-"""Connections to the two external databases (OLTP source, DW target)."""
+"""Connections to the databases: OLTP source, DW target and the staging-db."""
 import pymysql
 import pymysql.cursors
 
-from config import oltp_cfg, dw_cfg
+from config import oltp_cfg, dw_cfg, stg_cfg
 
 
 def oltp_conn():
@@ -11,10 +11,16 @@ def oltp_conn():
 
 
 def dw_read_conn():
-    # separate read-only-use connection (used by extract to find still-open records)
+    # separate read-only-use connection (find still-open records, resolve surrogate keys)
     return pymysql.connect(**dw_cfg(), cursorclass=pymysql.cursors.DictCursor, autocommit=True)
 
 
 def dw_conn():
-    # autocommit OFF: the whole load is ONE transaction (commit at the end, rollback on error)
+    # autocommit OFF: each load task is ONE transaction (commit at the end, rollback on error)
     return pymysql.connect(**dw_cfg(), cursorclass=pymysql.cursors.DictCursor, autocommit=False)
+
+
+def stg_conn():
+    # staging layers (stg_extract / stg_transform / stg_load); each task clears its batch first,
+    # so autocommit is fine and a retry never duplicates rows.
+    return pymysql.connect(**stg_cfg(), cursorclass=pymysql.cursors.DictCursor, autocommit=True)
